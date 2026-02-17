@@ -1,0 +1,8 @@
+node_modules/
+client/node_modules/
+client/dist/
+server/uploads/
+server/planny.db
+.env
+.DS_Store
+*.log

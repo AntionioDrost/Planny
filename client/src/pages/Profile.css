@@ -1,0 +1,223 @@
+.profile-page {
+  color: white;
+}
+
+.profile-header {
+  margin-bottom: 2rem;
+}
+
+.profile-header h1 {
+  font-size: 2.5rem;
+}
+
+.profile-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.profile-card {
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 16px;
+  padding: 2rem;
+  color: #333;
+}
+
+.profile-card h2 {
+  color: #667eea;
+  margin-bottom: 1rem;
+}
+
+.profile-image-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.profile-image {
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 4px solid #667eea;
+}
+
+.profile-image-placeholder {
+  width: 150px;
+  height: 150px;
+  border-radius: 50%;
+  background: #667eea;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 4rem;
+  font-weight: bold;
+  border: 4px solid #667eea;
+}
+
+.upload-btn {
+  background: #667eea;
+  color: white;
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: background 0.3s;
+  display: inline-block;
+}
+
+.upload-btn:hover {
+  background: #5568d3;
+}
+
+.profile-info {
+  text-align: center;
+}
+
+.profile-info h2 {
+  color: #333;
+  margin-bottom: 0.5rem;
+}
+
+.profile-email {
+  color: #666;
+  margin-bottom: 0.5rem;
+}
+
+.profile-joined {
+  color: #999;
+  font-size: 0.9rem;
+}
+
+.toggle-qr-btn {
+  background: #667eea;
+  color: white;
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 500;
+  margin: 1rem 0;
+  transition: background 0.3s;
+}
+
+.toggle-qr-btn:hover {
+  background: #5568d3;
+}
+
+.qr-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 1.5rem auto 0;
+  padding: 1rem;
+  background: white;
+  border-radius: 8px;
+}
+
+.calendar-link {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.feed-input {
+  flex: 1;
+  padding: 0.75rem;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-family: monospace;
+}
+
+.copy-btn {
+  background: #667eea;
+  color: white;
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background 0.3s;
+}
+
+.copy-btn:hover {
+  background: #5568d3;
+}
+
+.help-text {
+  font-size: 0.9rem;
+  color: #666;
+  margin-top: 0.5rem;
+}
+
+.profile-logout-section {
+  display: flex;
+  justify-content: center;
+  padding-top: 0.5rem;
+}
+
+.profile-logout-section .logout-btn {
+  background: #e74c3c;
+  color: white;
+  border: none;
+  padding: 0.75rem 2rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: background 0.3s;
+  min-height: 44px;
+}
+
+.profile-logout-section .logout-btn:hover {
+  background: #c0392b;
+}
+
+@media (max-width: 768px) {
+  .profile-header h1 {
+    font-size: 1.75rem;
+  }
+
+  .profile-card {
+    padding: 1.25rem;
+  }
+
+  .profile-image-section {
+    margin-bottom: 1.5rem;
+  }
+
+  .profile-image,
+  .profile-image-placeholder {
+    width: 120px;
+    height: 120px;
+    font-size: 3rem;
+  }
+
+  .upload-btn {
+    width: 100%;
+    text-align: center;
+    min-height: 48px;
+  }
+
+  .calendar-link {
+    flex-direction: column;
+  }
+
+  .copy-btn {
+    width: 100%;
+  }
+
+  .toggle-qr-btn {
+    width: 100%;
+    min-height: 48px;
+  }
+
+  .profile-logout-section .logout-btn {
+    width: 100%;
+    min-height: 48px;
+  }
+}
