@@ -1,0 +1,94 @@
+# Planny - Database Schema Design (Phase 1)
+
+This document outlines the proposed Supabase PostgreSQL database schema to support Planny's core values: consent, privacy, and mutuality.
+
+## User Review Required
+
+> [!IMPORTANT]
+> Please review the proposed **Event Visibility** logic below. Does this matrix cover all the privacy needs for your connections? Are there any edge cases (like hiding specifically from *one* person but showing to everyone else) that need a different approach? 
+
+## Proposed Changes
+
+We will create the following tables in Supabase:
+
+### 1. `users`
+Extends the default Supabase `auth.users`.
+- `id` (uuid, primary key, references `auth.users`)
+- `email` (text)
+- `display_name` (text, nullable initially)
+- `avatar_url` (text, nullable)
+- `created_at` (timestamp)
+
+### 2. `connections`
+Handles the mutual agreements (QR code scans) between users.
+- `id` (uuid, primary key)
+- `user_1_id` (uuid, references `users`)
+- `user_2_id` (uuid, references `users`)
+- `status` (enum: `pending`, `active`, `limited`, `removed`)
+- `created_at` (timestamp)
+- `updated_at` (timestamp)
+*(Note: We will enforce that `user_1_id` < `user_2_id` to prevent duplicate connection rows.)*
+
+### 3. `events`
+The core calendar items.
+- `id` (uuid, primary key)
+- `creator_id` (uuid, references `users`)
+- `title` (text)
+- `date` (date)
+- `start_time` (time)
+- `end_time` (time)
+- `is_all_day` (boolean)
+- `location` (text, nullable)
+- `notes` (text, nullable)
+- `is_recurring` (boolean)
+- `status` (enum: `tentative`, `confirmed`, `canceled`)
+- `created_at` (timestamp)
+- `updated_at` (timestamp)
+
+### 4. `event_participants`
+The people actually invited/involved in the date (Consent layer).
+- `event_id` (uuid, references `events`)
+- `user_id` (uuid, references `users`)
+- `status` (enum: `pending`, `accepted`, `declined`, `proposed_new_time`)
+- `created_at` (timestamp)
+
+### 5. `event_visibility`
+The privacy matrix defining who can see what (Privacy layer). For every event, the creator can assign specific visibility rules to their connections.
+- `id` (uuid, primary key)
+- `event_id` (uuid, references `events`)
+- `viewer_user_id` (uuid, references `users` - the person who is allowed to see this)
+- `visibility_level` (enum: `hidden`, `busy_only`, `title_only`, `full_details`)
+- `can_see_participants` (boolean - whether they can see who else is going)
+
+### 6. `availability_blocks`
+Manual blocks of time without a specific event attached.
+- `id` (uuid, primary key)
+- `user_id` (uuid, references `users`)
+- `start_time` (timestamp tz)
+- `end_time` (timestamp tz)
+- `created_at` (timestamp)
+
+## Security & Privacy (Row Level Security - RLS)
+
+> [!CAUTION]
+> RLS is the most critical part of Planny. Even if a bug occurs in the app UI, the database will refuse to return data that a user isn't allowed to see.
+
+*   **Users** can only read their own profile, and the profiles of users they have an `active` or `limited` connection with.
+*   **Events** are strictly locked down. A user can only fetch an event if:
+    1. They are the `creator_id`.
+    2. They have an entry in `event_participants`.
+    3. They have an entry in `event_visibility` where `visibility_level != 'hidden'` (and even then, we will use database views to mask fields like `title` and `location` if they only have `busy_only` access).
+
+## Verification Plan
+
+### Automated Verification
+Once the Supabase project is set up, we will write SQL pgTAP tests or frontend integration tests (using `@supabase/supabase-js`) to verify that:
+1. User A cannot see User B's events unless explicitly granted visibility.
+2. If a connection is set to `limited`, User A's visibility into User B's calendar instantly drops to `busy_only` or `hidden` (depending on default settings).
+
+### Manual Verification
+1. We will set up two test accounts in the app.
+2. Create an event on Account A, invite Account B.
+3. Verify Account B gets a `pending` status.
+4. Set visibility of the event for Account C (a third connection) to `title_only`.
+5. Log into Account C and verify they can see the time block and title, but not the notes, location, or participants.

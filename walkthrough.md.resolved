@@ -1,0 +1,53 @@
+# Planny - Project Walkthrough
+
+We have successfully mapped the comprehensive Planny product specification into a working React Native (`Expo`) MVP, backed by a scalable Supabase database.
+
+## Architecture & Data Privacy
+
+The core challenge of Planny was **privacy and mutuality**. We solved this at the database level using Supabase Row Level Security (RLS). 
+
+Instead of filtering data on the frontend (where malicious users could intercept it), our Postgres database strictly enforces permissions. For a user to fetch an Event, the database checks:
+1. Are they the Creator?
+2. Are they an invited Participant?
+3. Did the Creator explicitly grant them a Visibility Rule in the `event_visibility` table?
+
+If none of those are true, the event does not exist to that user.
+
+## Screens Implemented
+
+### 1. Authentication & Onboarding
+- **Start Page:** A clean, modern login screen featuring the requested "Orange background with white sparkles" splash design.
+- **Onboarding:** As per the spec, immediate access post-login routing users to set their display name before pushing them to the main tabs.
+
+### 2. Tab Navigation
+Built a fast, native tab system using `expo-router` connecting the three main pillars: Home, Plan, and Profile.
+
+### 3. The Home Page (Overview)
+- Built a Calendar UI that aggregates:
+  - Your own planned events.
+  - Dates you are invited to.
+  - Time blocks shared with you by connections (using the `busy_only` or `title_only` masking rules natively).
+- The agenda list updates dynamically as you click days on the calendar.
+
+### 4. Planning Page (Event Creation)
+- A complex date entry form supporting start/end times and multi-line notes.
+- **Consent mechanism:** Users can select participants from their connection list.
+- **Privacy mechanism:** Below the participants, users see a list of their *other* connections and can independently set the privacy level (`Hidden`, `Free/Busy`, `Title`, `Full Details`) for this specific event.
+
+### 5. Event Details (Consent/RSVP)
+- When a user clicks an event on the Home page, they see the full details.
+- If they are an invited participant, they see a prominent **Accept** or **Decline** button block, which updates the `event_participants` table to finalize the date.
+- If they are viewing it through a limited visibility link, the app shows a banner warning them they are viewing a restricted version of the record.
+
+### 6. Mutuality (QR Code Connect)
+- Scaffolded the "Connect" screen containing the initial QR code generator (using rolling tokens to prevent screenshot abuse) and the camera permissions check framework for the mutual scan requirement.
+
+### 7. User Settings
+- A profile tab consolidating connection management, visibility defaults, external calendar integrations, and notification preferences.
+
+## Next Steps
+
+To take this from MVP to production:
+1. **Push Notifications:** Hook up Expo Push Notifications to trigger when a user receives a new date request or acceptance.
+2. **External Sync:** Implement the Google/Apple Calendar auth flow to pull events into the [availability.ts](file:///c:/Users/31637/Planny%20IOS/Planny/utils/availability.ts) conflict checker engine.
+3. **Camera Sync:** Wire up the actual barcode scanner `onCodeScanned` callback to trigger the two-way Supabase connection insert.

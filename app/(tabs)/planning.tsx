@@ -1,0 +1,503 @@
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Switch, Alert, ActivityIndicator } from 'react-native';
+import { supabase } from '@/utils/supabase';
+import { router } from 'expo-router';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { Users, Lock, Calendar as CalendarIcon, Clock, MapPin, AlignLeft } from 'lucide-react-native';
+import { createEventBundle } from '@/services/event-service';
+import { checkAvailability } from '@/utils/availability';
+import { listConnections } from '@/services/connection-service';
+
+export default function PlanningScreen() {
+    const [loading, setLoading] = useState(false);
+    const [connections, setConnections] = useState<any[]>([]);
+
+    // Form State
+    const [title, setTitle] = useState('');
+    const [date, setDate] = useState(new Date());
+    const [startTime, setStartTime] = useState(new Date());
+    const [endTime, setEndTime] = useState(new Date(new Date().setHours(new Date().getHours() + 1))); // Default 1 hr
+    const [isAllDay, setIsAllDay] = useState(false);
+    const [location, setLocation] = useState('');
+    const [notes, setNotes] = useState('');
+
+    // Participants & Visibility
+    const [selectedParticipants, setSelectedParticipants] = useState<string[]>([]);
+    const [visibilitySettings, setVisibilitySettings] = useState<Record<string, 'hidden' | 'busy_only' | 'title_only' | 'full_details'>>({});
+
+    // Date Pickers State
+    const [showDatePicker, setShowDatePicker] = useState(false);
+    const [showStartTimePicker, setShowStartTimePicker] = useState(false);
+    const [showEndTimePicker, setShowEndTimePicker] = useState(false);
+
+    useEffect(() => {
+        void loadConnections();
+    }, []);
+
+    const loadConnections = async () => {
+        const connectionProfiles = await listConnections();
+
+        setConnections(connectionProfiles);
+
+        // Initialize default visibility (free/busy)
+        const initialVis: Record<string, 'busy_only'> = {};
+        connectionProfiles.forEach((cp: any) => {
+            if (cp.otherUser?.id) {
+                initialVis[cp.otherUser.id] = 'busy_only';
+            }
+        });
+        setVisibilitySettings(initialVis);
+    };
+
+    const toggleParticipant = (userId: string) => {
+        setSelectedParticipants(prev => {
+            const isSelected = prev.includes(userId);
+            if (isSelected) {
+                return prev.filter(id => id !== userId);
+            } else {
+                // Automatically grant full details to a participant
+                setVisibilitySettings(vis => ({ ...vis, [userId]: 'full_details' }));
+                return [...prev, userId];
+            }
+        });
+    };
+
+    const handleCreateEvent = async () => {
+        if (!title) {
+            Alert.alert('Required', 'Please enter an event title.');
+            return;
+        }
+
+        setLoading(true);
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+            setLoading(false);
+            Alert.alert('Not logged in', 'Please sign in again.');
+            return;
+        }
+
+        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const startAt = new Date(date);
+        const endAt = new Date(date);
+
+        if (isAllDay) {
+            startAt.setHours(0, 0, 0, 0);
+            endAt.setDate(endAt.getDate() + 1);
+            endAt.setHours(0, 0, 0, 0);
+        } else {
+            startAt.setHours(startTime.getHours(), startTime.getMinutes(), 0, 0);
+            endAt.setHours(endTime.getHours(), endTime.getMinutes(), 0, 0);
+        }
+
+        if (endAt <= startAt) {
+            setLoading(false);
+            Alert.alert('Invalid time', 'End time must be after start time.');
+            return;
+        }
+
+        if (selectedParticipants.length > 0) {
+            const availability = await checkAvailability(
+                user.id,
+                selectedParticipants,
+                date,
+                startAt,
+                endAt
+            );
+
+            if (!availability.isAvailable) {
+                const conflictText = availability.conflicts
+                    .map((conflict) => conflict.reason)
+                    .join(', ');
+                Alert.alert('Availability warning', `This time appears unavailable for someone selected: ${conflictText}`);
+            }
+        }
+
+        try {
+            await createEventBundle({
+                title,
+                startAtUtc: startAt.toISOString(),
+                endAtUtc: endAt.toISOString(),
+                timezone,
+                isAllDay,
+                location,
+                notes,
+                participantIds: selectedParticipants,
+                visibility: Object.entries(visibilitySettings).map(([viewer_user_id, level]) => ({
+                    viewer_user_id,
+                    level,
+                    can_see_participants: level === 'full_details',
+                })),
+                recurrenceKind: 'none',
+            });
+
+            Alert.alert('Success', 'Event created and requests sent!', [
+                { text: 'OK', onPress: () => router.push('/(tabs)') },
+            ]);
+        } catch (error: any) {
+            Alert.alert('Error creating event', error?.message ?? 'Unknown error');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+            <Text style={styles.headerTitle}>Plan a Date</Text>
+
+            {/* Basic Info */}
+            <View style={styles.section}>
+                <TextInput
+                    style={styles.titleInput}
+                    placeholder="Event Title"
+                    placeholderTextColor="#888"
+                    value={title}
+                    onChangeText={setTitle}
+                />
+
+                <View style={styles.row}>
+                    <CalendarIcon size={20} color="#666" />
+                    <TouchableOpacity onPress={() => setShowDatePicker(true)} style={styles.datePickerButton}>
+                        <Text style={styles.dateText}>{date.toLocaleDateString()}</Text>
+                    </TouchableOpacity>
+                </View>
+
+                {showDatePicker && (
+                    <DateTimePicker
+                        value={date}
+                        mode="date"
+                        display="default"
+                        onChange={(event, selectedDate) => {
+                            setShowDatePicker(false);
+                            if (selectedDate) setDate(selectedDate);
+                        }}
+                    />
+                )}
+
+                <View style={styles.switchRow}>
+                    <Text style={styles.switchLabel}>All-Day Event</Text>
+                    <Switch
+                        value={isAllDay}
+                        onValueChange={setIsAllDay}
+                        trackColor={{ false: '#EAEAEA', true: '#FF9500' }}
+                    />
+                </View>
+
+                {!isAllDay && (
+                    <View style={styles.timeContainer}>
+                        <View style={styles.timeRow}>
+                            <Clock size={20} color="#666" />
+                            <TouchableOpacity onPress={() => setShowStartTimePicker(true)} style={styles.datePickerButton}>
+                                <Text style={styles.dateText}>Starts: {startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
+                            </TouchableOpacity>
+                            {showStartTimePicker && (
+                                <DateTimePicker
+                                    value={startTime}
+                                    mode="time"
+                                    display="default"
+                                    onChange={(event, selectedTime) => {
+                                        setShowStartTimePicker(false);
+                                        if (selectedTime) setStartTime(selectedTime);
+                                    }}
+                                />
+                            )}
+                        </View>
+                        <View style={styles.timeRow}>
+                            <Clock size={20} color="transparent" />
+                            <TouchableOpacity onPress={() => setShowEndTimePicker(true)} style={styles.datePickerButton}>
+                                <Text style={styles.dateText}>Ends: {endTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
+                            </TouchableOpacity>
+                            {showEndTimePicker && (
+                                <DateTimePicker
+                                    value={endTime}
+                                    mode="time"
+                                    display="default"
+                                    onChange={(event, selectedTime) => {
+                                        setShowEndTimePicker(false);
+                                        if (selectedTime) setEndTime(selectedTime);
+                                    }}
+                                />
+                            )}
+                        </View>
+                    </View>
+                )}
+
+                <View style={styles.inputRow}>
+                    <MapPin size={20} color="#666" />
+                    <TextInput
+                        style={styles.textInput}
+                        placeholder="Location"
+                        placeholderTextColor="#888"
+                        value={location}
+                        onChangeText={setLocation}
+                    />
+                </View>
+
+                <View style={styles.inputRow}>
+                    <AlignLeft size={20} color="#666" />
+                    <TextInput
+                        style={[styles.textInput, { height: 80, textAlignVertical: 'top' }]}
+                        placeholder="Notes"
+                        placeholderTextColor="#888"
+                        multiline
+                        value={notes}
+                        onChangeText={setNotes}
+                    />
+                </View>
+            </View>
+
+            {/* Participants (Consent) */}
+            <View style={styles.section}>
+                <Text style={styles.sectionHeader}><Users size={18} color="#FF9500" />  Who are you planning with?</Text>
+                <Text style={styles.sectionDescription}>They will receive a request to accept this date.</Text>
+
+                {connections.length === 0 ? (
+                    <Text style={styles.emptyText}>You don&apos;t have any connections yet.</Text>
+                ) : (
+                    connections.map(conn => {
+                        const isSelected = selectedParticipants.includes(conn.otherUser.id);
+                        return (
+                            <TouchableOpacity
+                                key={`participant-${conn.id}`}
+                                style={[styles.personCard, isSelected && styles.personCardSelected]}
+                                onPress={() => toggleParticipant(conn.otherUser.id)}
+                            >
+                                <View style={styles.avatarPlaceholder} />
+                                <Text style={[styles.personName, isSelected && styles.personNameSelected]}>
+                                    {conn.otherUser.display_name}
+                                </Text>
+                            </TouchableOpacity>
+                        );
+                    })
+                )}
+            </View>
+
+            {/* Visibility (Privacy) */}
+            <View style={styles.section}>
+                <Text style={styles.sectionHeader}><Lock size={18} color="#FF9500" />  Privacy & Visibility</Text>
+                <Text style={styles.sectionDescription}>Control what your other connections can see about this time.</Text>
+
+                {connections.length > 0 && connections.map(conn => {
+                    const userId = conn.otherUser.id;
+                    const isParticipant = selectedParticipants.includes(userId);
+                    const currentVis = visibilitySettings[userId] || 'hidden';
+
+                    if (isParticipant) return null; // Participants automatically get full details
+
+                    return (
+                        <View key={`vis-${conn.id}`} style={styles.visibilityRow}>
+                            <Text style={styles.visName}>{conn.otherUser.display_name}</Text>
+                            <View style={styles.visOptions}>
+                                {['hidden', 'busy_only', 'title_only', 'full_details'].map((level) => (
+                                    <TouchableOpacity
+                                        key={level}
+                                        style={[styles.visButton, currentVis === level && styles.visButtonSelected]}
+                                        onPress={() => setVisibilitySettings(prev => ({ ...prev, [userId]: level as any }))}
+                                    >
+                                        <Text style={[styles.visButtonText, currentVis === level && styles.visButtonTextSelected]}>
+                                            {level === 'busy_only' ? 'Free/Busy' : level === 'title_only' ? 'Title' : level === 'hidden' ? 'Hidden' : 'Full'}
+                                        </Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        </View>
+                    );
+                })}
+            </View>
+
+            <TouchableOpacity
+                style={styles.submitButton}
+                onPress={handleCreateEvent}
+                disabled={loading}
+            >
+                {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitButtonText}>Send Plan</Text>}
+            </TouchableOpacity>
+
+            <View style={{ height: 100 }} />
+        </ScrollView>
+    );
+}
+
+const styles = StyleSheet.create({
+    container: {
+        flex: 1,
+        backgroundColor: '#F9F9F9',
+    },
+    content: {
+        padding: 24,
+        paddingTop: 60,
+    },
+    headerTitle: {
+        fontSize: 32,
+        fontWeight: 'bold',
+        color: '#111',
+        marginBottom: 24,
+    },
+    section: {
+        backgroundColor: '#fff',
+        borderRadius: 16,
+        padding: 20,
+        marginBottom: 24,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.05,
+        shadowRadius: 8,
+        elevation: 2,
+    },
+    titleInput: {
+        fontSize: 22,
+        fontWeight: 'bold',
+        marginBottom: 20,
+        borderBottomWidth: 1,
+        borderBottomColor: '#EAEAEA',
+        paddingBottom: 12,
+    },
+    row: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 16,
+    },
+    datePickerButton: {
+        marginLeft: 12,
+        padding: 8,
+        backgroundColor: '#F5F5F5',
+        borderRadius: 8,
+    },
+    dateText: {
+        fontSize: 16,
+        color: '#333',
+    },
+    switchRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 16,
+        paddingVertical: 8,
+        borderTopWidth: 1,
+        borderBottomWidth: 1,
+        borderColor: '#EAEAEA',
+    },
+    switchLabel: {
+        fontSize: 16,
+        color: '#333',
+    },
+    timeContainer: {
+        marginBottom: 16,
+        paddingLeft: 4,
+    },
+    timeRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 12,
+    },
+    inputRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        marginBottom: 12,
+    },
+    textInput: {
+        flex: 1,
+        marginLeft: 12,
+        fontSize: 16,
+        color: '#333',
+        backgroundColor: '#F5F5F5',
+        padding: 12,
+        borderRadius: 8,
+    },
+    sectionHeader: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        color: '#111',
+        marginBottom: 4,
+    },
+    sectionDescription: {
+        fontSize: 14,
+        color: '#666',
+        marginBottom: 16,
+    },
+    emptyText: {
+        color: '#888',
+        fontStyle: 'italic',
+    },
+    personCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        padding: 12,
+        borderRadius: 12,
+        backgroundColor: '#F5F5F5',
+        marginBottom: 8,
+        borderWidth: 1,
+        borderColor: '#EAEAEA',
+    },
+    personCardSelected: {
+        backgroundColor: '#FFF4E5',
+        borderColor: '#FF9500',
+    },
+    avatarPlaceholder: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: '#DDD',
+        marginRight: 12,
+    },
+    personName: {
+        fontSize: 16,
+        color: '#333',
+    },
+    personNameSelected: {
+        color: '#FF9500',
+        fontWeight: 'bold',
+    },
+    visibilityRow: {
+        flexDirection: 'column',
+        marginBottom: 16,
+        paddingBottom: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F0F0F0',
+    },
+    visName: {
+        fontSize: 16,
+        fontWeight: '600',
+        marginBottom: 8,
+    },
+    visOptions: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+    },
+    visButton: {
+        paddingVertical: 6,
+        paddingHorizontal: 10,
+        borderRadius: 16,
+        backgroundColor: '#F5F5F5',
+        borderWidth: 1,
+        borderColor: '#EAEAEA',
+    },
+    visButtonSelected: {
+        backgroundColor: '#333',
+        borderColor: '#333',
+    },
+    visButtonText: {
+        fontSize: 12,
+        color: '#666',
+    },
+    visButtonTextSelected: {
+        color: '#fff',
+        fontWeight: 'bold',
+    },
+    submitButton: {
+        backgroundColor: '#FF9500',
+        padding: 18,
+        borderRadius: 16,
+        alignItems: 'center',
+        shadowColor: '#FF9500',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
+        elevation: 4,
+    },
+    submitButtonText: {
+        color: '#fff',
+        fontSize: 18,
+        fontWeight: 'bold',
+    },
+});
