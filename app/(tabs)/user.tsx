@@ -17,6 +17,7 @@ export default function UserScreen() {
     const [pushEnabled, setPushEnabled] = useState(true);
     const [hideEverythingEnabled, setHideEverythingEnabled] = useState(false);
     const [selectedCalendarCount, setSelectedCalendarCount] = useState(0);
+    const [loggingOut, setLoggingOut] = useState(false);
 
     const loadProfile = useCallback(async () => {
         setLoading(true);
@@ -80,10 +81,18 @@ export default function UserScreen() {
     );
 
     const handleLogout = async () => {
+        setLoggingOut(true);
+        setLoading(true);
+        setProfile(null);
+
         const { error } = await signOut();
         if (error) {
+            setLoggingOut(false);
+            setLoading(false);
             Alert.alert('Logout warning', error.message);
+            return;
         }
+
         router.replace('/');
     };
 
@@ -239,10 +248,12 @@ export default function UserScreen() {
                     <ChevronRight color="#CCC" size={20} />
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.actionRow} onPress={handleLogout}>
+                <TouchableOpacity style={styles.actionRow} onPress={handleLogout} disabled={loggingOut}>
                     <View style={styles.actionRowLeft}>
                         <LogOut color="#D32F2F" size={20} />
-                        <Text style={[styles.actionText, { color: '#D32F2F' }]}>Log Out</Text>
+                        <Text style={[styles.actionText, { color: '#D32F2F' }]}>
+                            {loggingOut ? 'Logging Out...' : 'Log Out'}
+                        </Text>
                     </View>
                 </TouchableOpacity>
 

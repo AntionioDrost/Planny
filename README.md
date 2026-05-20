@@ -17,11 +17,37 @@ Create a local `.env` file from `.env.example` and set:
 EXPO_PUBLIC_APP_ENV=dev
 EXPO_PUBLIC_SUPABASE_URL=...
 EXPO_PUBLIC_SUPABASE_ANON_KEY=...
+EXPO_PUBLIC_PASSWORD_RESET_REDIRECT_URL=planny://reset-password
 EXPO_PUBLIC_FEATURE_FLAGS=proposals,export,hide_everything
 EXPO_PUBLIC_SHOW_CONFIG_WARNINGS=1
 ```
 
 Without the Supabase URL + anon key the app will load the shell, but auth and backend flows stay disabled on purpose.
+
+## Supabase Auth Email Setup
+
+Password reset emails require both a valid redirect URL and SMTP delivery in Supabase.
+
+In the Supabase Dashboard for the Planny project:
+
+1. Open `Authentication > URL Configuration`.
+2. Set `Site URL` to `planny://reset-password`.
+3. Add these redirect URLs:
+   - `planny://reset-password`
+   - `planny:///reset-password`
+   - `exp://**/--/reset-password` for Expo Go testing
+   - `http://localhost:8081/reset-password` for local web testing
+   - `http://127.0.0.1:8081/reset-password` for local web testing
+4. Open `Authentication > SMTP Settings`.
+5. Enable custom SMTP and fill in your provider details:
+   - SMTP host
+   - SMTP port, usually `587`
+   - SMTP user
+   - SMTP password
+   - Sender email, for example `no-reply@yourdomain.com`
+   - Sender name, for example `Planny`
+
+Supabase's default email service only sends to authorized team member addresses, so real users need custom SMTP.
 
 ## Install and Run
 

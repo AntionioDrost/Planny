@@ -26,6 +26,7 @@ if (secretKeyDetected) {
 
 const supabaseUrl = envSupabaseUrl ?? 'https://placeholder.supabase.co';
 const supabaseAnonKey = envSupabaseAnonKey ?? 'placeholder-anon-key';
+export const supabaseAuthStorageKey = `sb-${new URL(supabaseUrl).hostname.split('.')[0]}-auth-token`;
 
 const ExpoTokenStorage = {
   getItem: (key: string) => {
@@ -120,9 +121,36 @@ export const supabase: any = isSupabaseConfigured
   ? createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
         storage: ExpoTokenStorage,
+        storageKey: supabaseAuthStorageKey,
         autoRefreshToken: true,
         persistSession: true,
         detectSessionInUrl: false,
       },
     })
   : createMockSupabaseClient();
+
+export async function clearSupabaseAuthStorage() {
+  const authKeys = [
+    supabaseAuthStorageKey,
+    `${supabaseAuthStorageKey}-code-verifier`,
+    `${supabaseAuthStorageKey}-user`,
+  ];
+
+  if (Platform.OS === 'web') {
+    if (typeof localStorage === 'undefined') return;
+
+    for (const key of Object.keys(localStorage)) {
+      if (authKeys.includes(key)) {
+        localStorage.removeItem(key);
+      }
+    }
+    return;
+  }
+
+  const storedKeys = await AsyncStorage.getAllKeys();
+  const keysToRemove = storedKeys.filter((key) => authKeys.includes(key));
+
+  if (keysToRemove.length > 0) {
+    await AsyncStorage.multiRemove(keysToRemove);
+  }
+}
