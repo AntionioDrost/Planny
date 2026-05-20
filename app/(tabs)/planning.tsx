@@ -1,16 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Switch, Alert, ActivityIndicator } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '@/utils/supabase';
 import { router } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Users, Lock, Calendar as CalendarIcon, Clock, MapPin, AlignLeft } from 'lucide-react-native';
-import { createEventBundle } from '@/services/event-service';
+import { VISIBILITY_LABELS, VISIBILITY_LEVELS } from '@/constants/visibility';
+import { createEventBundle, getEventForSync } from '@/services/event-service';
 import { checkAvailability } from '@/utils/availability';
 import { listConnections } from '@/services/connection-service';
+import { getMyPreferences } from '@/services/preferences-service';
+import { syncPlannyEventToDeviceCalendars } from '@/services/device-calendar-service';
+import type { VisibilityLevel } from '@/types/domain';
 
 export default function PlanningScreen() {
     const [loading, setLoading] = useState(false);
+    const [connectionsLoading, setConnectionsLoading] = useState(true);
     const [connections, setConnections] = useState<any[]>([]);
+    const [defaultVisibility, setDefaultVisibility] = useState<VisibilityLevel>('busy_only');
 
     // Form State
     const [title, setTitle] = useState('');
@@ -23,31 +30,65 @@ export default function PlanningScreen() {
 
     // Participants & Visibility
     const [selectedParticipants, setSelectedParticipants] = useState<string[]>([]);
-    const [visibilitySettings, setVisibilitySettings] = useState<Record<string, 'hidden' | 'busy_only' | 'title_only' | 'full_details'>>({});
+    const [visibilitySettings, setVisibilitySettings] = useState<Record<string, VisibilityLevel>>({});
 
     // Date Pickers State
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [showStartTimePicker, setShowStartTimePicker] = useState(false);
     const [showEndTimePicker, setShowEndTimePicker] = useState(false);
 
-    useEffect(() => {
-        void loadConnections();
+    const loadConnections = useCallback(async () => {
+        setConnectionsLoading(true);
+        try {
+            const connectionProfiles = await listConnections();
+            let nextDefaultVisibility: VisibilityLevel = 'busy_only';
+
+            try {
+                const preferences = await getMyPreferences();
+                nextDefaultVisibility = preferences?.default_existing_visibility ?? 'busy_only';
+            } catch {
+                // Fall back to the product default so the planner still works if preferences are unavailable.
+            }
+
+            const availableUserIds = new Set<string>();
+            connectionProfiles.forEach((connection: any) => {
+                const otherUserId = connection.otherUser?.id;
+                if (otherUserId) {
+                    availableUserIds.add(otherUserId);
+                }
+            });
+
+            setConnections(connectionProfiles);
+            setDefaultVisibility(nextDefaultVisibility);
+            setSelectedParticipants((prev) => prev.filter((userId) => availableUserIds.has(userId)));
+            setVisibilitySettings((prev) => {
+                const next: Record<string, VisibilityLevel> = {};
+
+                availableUserIds.forEach((userId) => {
+                    next[userId] = prev[userId] ?? nextDefaultVisibility;
+                });
+
+                return next;
+            });
+        } catch (error: any) {
+            setConnections([]);
+            Alert.alert('Could not load planner', error?.message ?? 'Connections could not be loaded.');
+        } finally {
+            setConnectionsLoading(false);
+        }
     }, []);
 
-    const loadConnections = async () => {
-        const connectionProfiles = await listConnections();
+    useFocusEffect(
+        useCallback(() => {
+            void loadConnections();
+        }, [loadConnections])
+    );
 
-        setConnections(connectionProfiles);
-
-        // Initialize default visibility (free/busy)
-        const initialVis: Record<string, 'busy_only'> = {};
-        connectionProfiles.forEach((cp: any) => {
-            if (cp.otherUser?.id) {
-                initialVis[cp.otherUser.id] = 'busy_only';
-            }
-        });
-        setVisibilitySettings(initialVis);
-    };
+    const availableConnections = connections.filter((connection) => connection.otherUser?.id);
+    const allParticipantIds = availableConnections.map((connection) => connection.otherUser.id);
+    const allConnectionsSelected =
+        allParticipantIds.length > 0 &&
+        allParticipantIds.every((userId) => selectedParticipants.includes(userId));
 
     const toggleParticipant = (userId: string) => {
         setSelectedParticipants(prev => {
@@ -55,12 +96,37 @@ export default function PlanningScreen() {
             if (isSelected) {
                 return prev.filter(id => id !== userId);
             } else {
-                // Automatically grant full details to a participant
-                setVisibilitySettings(vis => ({ ...vis, [userId]: 'full_details' }));
                 return [...prev, userId];
             }
         });
     };
+
+    const toggleSelectAllParticipants = () => {
+        if (allConnectionsSelected) {
+            setSelectedParticipants((prev) => prev.filter((userId) => !allParticipantIds.includes(userId)));
+            return;
+        }
+
+        setSelectedParticipants(allParticipantIds);
+    };
+
+    const confirmAvailabilityWarning = useCallback(
+        (reasons: string[]) =>
+            new Promise<boolean>((resolve) => {
+                Alert.alert(
+                    'Potential conflict',
+                    `Planny found possible conflicts from your selected device calendars or the people you invited: ${reasons.join(', ')}. You can still send the plan if you want.`,
+                    [
+                        { text: 'Go back', style: 'cancel', onPress: () => resolve(false) },
+                        { text: 'Send anyway', onPress: () => resolve(true) },
+                    ],
+                    {
+                        cancelable: false,
+                    }
+                );
+            }),
+        []
+    );
 
     const handleCreateEvent = async () => {
         if (!title) {
@@ -105,15 +171,29 @@ export default function PlanningScreen() {
             );
 
             if (!availability.isAvailable) {
-                const conflictText = availability.conflicts
-                    .map((conflict) => conflict.reason)
-                    .join(', ');
-                Alert.alert('Availability warning', `This time appears unavailable for someone selected: ${conflictText}`);
+                const reasons = Array.from(new Set(availability.conflicts.map((conflict) => conflict.reason)));
+                const shouldContinue = await confirmAvailabilityWarning(reasons);
+                if (!shouldContinue) {
+                    setLoading(false);
+                    return;
+                }
             }
         }
 
         try {
-            await createEventBundle({
+            const visibilityPayload = availableConnections.map((connection) => {
+                const viewer_user_id = connection.otherUser.id;
+                const isParticipant = selectedParticipants.includes(viewer_user_id);
+                const level = isParticipant ? 'full_details' : (visibilitySettings[viewer_user_id] ?? defaultVisibility);
+
+                return {
+                    viewer_user_id,
+                    level,
+                    can_see_participants: level === 'full_details',
+                };
+            });
+
+            const createdEventId = await createEventBundle({
                 title,
                 startAtUtc: startAt.toISOString(),
                 endAtUtc: endAt.toISOString(),
@@ -122,15 +202,23 @@ export default function PlanningScreen() {
                 location,
                 notes,
                 participantIds: selectedParticipants,
-                visibility: Object.entries(visibilitySettings).map(([viewer_user_id, level]) => ({
-                    viewer_user_id,
-                    level,
-                    can_see_participants: level === 'full_details',
-                })),
+                visibility: visibilityPayload,
                 recurrenceKind: 'none',
             });
 
-            Alert.alert('Success', 'Event created and requests sent!', [
+            let syncMessage = '';
+            try {
+                const syncableEvent = await getEventForSync(createdEventId);
+                const syncResult = await syncPlannyEventToDeviceCalendars(syncableEvent);
+                const syncedCalendarCount = 'syncedCalendars' in syncResult ? syncResult.syncedCalendars ?? 0 : 0;
+                if (!syncResult.skipped && syncedCalendarCount > 0) {
+                    syncMessage = ` Synced to ${syncedCalendarCount} device calendar${syncedCalendarCount === 1 ? '' : 's'}.`;
+                }
+            } catch (syncError: any) {
+                syncMessage = ` Event created, but calendar sync failed: ${syncError?.message ?? 'unknown error'}.`;
+            }
+
+            Alert.alert('Success', `Event created and requests sent!${syncMessage}`, [
                 { text: 'OK', onPress: () => router.push('/(tabs)') },
             ]);
         } catch (error: any) {
@@ -250,20 +338,44 @@ export default function PlanningScreen() {
                 <Text style={styles.sectionHeader}><Users size={18} color="#FF9500" />  Who are you planning with?</Text>
                 <Text style={styles.sectionDescription}>They will receive a request to accept this date.</Text>
 
-                {connections.length === 0 ? (
+                {!connectionsLoading && availableConnections.length > 0 ? (
+                    <View style={styles.participantActions}>
+                        <Text style={styles.selectionCount}>
+                            {selectedParticipants.length} selected
+                        </Text>
+                        <TouchableOpacity
+                            style={[styles.selectAllButton, allConnectionsSelected && styles.selectAllButtonActive]}
+                            onPress={toggleSelectAllParticipants}
+                        >
+                            <Text style={[styles.selectAllButtonText, allConnectionsSelected && styles.selectAllButtonTextActive]}>
+                                {allConnectionsSelected ? 'Clear all' : 'Select all'}
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
+                ) : null}
+
+                {connectionsLoading ? (
+                    <ActivityIndicator color="#FF9500" />
+                ) : availableConnections.length === 0 ? (
                     <Text style={styles.emptyText}>You don&apos;t have any connections yet.</Text>
                 ) : (
-                    connections.map(conn => {
+                    availableConnections.map(conn => {
                         const isSelected = selectedParticipants.includes(conn.otherUser.id);
+                        const displayName = conn.otherUser.display_name || 'Unknown User';
+                        const avatarLabel = displayName.charAt(0).toUpperCase();
                         return (
                             <TouchableOpacity
                                 key={`participant-${conn.id}`}
                                 style={[styles.personCard, isSelected && styles.personCardSelected]}
                                 onPress={() => toggleParticipant(conn.otherUser.id)}
                             >
-                                <View style={styles.avatarPlaceholder} />
+                                <View style={[styles.avatarPlaceholder, isSelected && styles.avatarPlaceholderSelected]}>
+                                    <Text style={[styles.avatarText, isSelected && styles.avatarTextSelected]}>
+                                        {avatarLabel}
+                                    </Text>
+                                </View>
                                 <Text style={[styles.personName, isSelected && styles.personNameSelected]}>
-                                    {conn.otherUser.display_name}
+                                    {displayName}
                                 </Text>
                             </TouchableOpacity>
                         );
@@ -274,31 +386,75 @@ export default function PlanningScreen() {
             {/* Visibility (Privacy) */}
             <View style={styles.section}>
                 <Text style={styles.sectionHeader}><Lock size={18} color="#FF9500" />  Privacy & Visibility</Text>
-                <Text style={styles.sectionDescription}>Control what your other connections can see about this time.</Text>
+                <Text style={styles.sectionDescription}>
+                    Selected participants automatically get full details. Choose what everyone else can see below.
+                </Text>
 
-                {connections.length > 0 && connections.map(conn => {
+                {!connectionsLoading && selectedParticipants.length > 0 ? (
+                    <View style={styles.participantPrivacyNotice}>
+                        <Text style={styles.participantPrivacyNoticeText}>
+                            {selectedParticipants.length} participant{selectedParticipants.length === 1 ? '' : 's'} automatically get full details for this plan.
+                        </Text>
+                    </View>
+                ) : null}
+
+                {connectionsLoading ? (
+                    <ActivityIndicator color="#FF9500" />
+                ) : availableConnections.length === 0 ? (
+                    <Text style={styles.emptyText}>You don&apos;t have any connections yet.</Text>
+                ) : availableConnections.map(conn => {
                     const userId = conn.otherUser.id;
                     const isParticipant = selectedParticipants.includes(userId);
-                    const currentVis = visibilitySettings[userId] || 'hidden';
-
-                    if (isParticipant) return null; // Participants automatically get full details
+                    const currentVis = isParticipant ? 'full_details' : (visibilitySettings[userId] ?? defaultVisibility);
+                    const displayName = conn.otherUser.display_name || 'Unknown User';
 
                     return (
-                        <View key={`vis-${conn.id}`} style={styles.visibilityRow}>
-                            <Text style={styles.visName}>{conn.otherUser.display_name}</Text>
-                            <View style={styles.visOptions}>
-                                {['hidden', 'busy_only', 'title_only', 'full_details'].map((level) => (
-                                    <TouchableOpacity
-                                        key={level}
-                                        style={[styles.visButton, currentVis === level && styles.visButtonSelected]}
-                                        onPress={() => setVisibilitySettings(prev => ({ ...prev, [userId]: level as any }))}
-                                    >
-                                        <Text style={[styles.visButtonText, currentVis === level && styles.visButtonTextSelected]}>
-                                            {level === 'busy_only' ? 'Free/Busy' : level === 'title_only' ? 'Title' : level === 'hidden' ? 'Hidden' : 'Full'}
-                                        </Text>
-                                    </TouchableOpacity>
-                                ))}
+                        <View key={`vis-${conn.id}`} style={[styles.visibilityRow, isParticipant && styles.visibilityRowLocked]}>
+                            <View style={styles.visHeaderRow}>
+                                <Text style={styles.visName}>{displayName}</Text>
+                                {isParticipant ? (
+                                    <View style={styles.participantBadge}>
+                                        <Text style={styles.participantBadgeText}>Participant</Text>
+                                    </View>
+                                ) : null}
                             </View>
+
+                            <View style={styles.visOptions}>
+                                {VISIBILITY_LEVELS.map((level) => {
+                                    const isSelectedLevel = currentVis === level;
+
+                                    return (
+                                        <TouchableOpacity
+                                            key={level}
+                                            disabled={isParticipant}
+                                            style={[
+                                                styles.visButton,
+                                                isSelectedLevel && styles.visButtonSelected,
+                                                isParticipant && !isSelectedLevel && styles.visButtonDisabled,
+                                                isParticipant && isSelectedLevel && styles.visButtonLockedSelected,
+                                            ]}
+                                            onPress={() => setVisibilitySettings(prev => ({ ...prev, [userId]: level }))}
+                                        >
+                                            <Text
+                                                style={[
+                                                    styles.visButtonText,
+                                                    isSelectedLevel && styles.visButtonTextSelected,
+                                                    isParticipant && !isSelectedLevel && styles.visButtonTextDisabled,
+                                                    isParticipant && isSelectedLevel && styles.visButtonTextLockedSelected,
+                                                ]}
+                                            >
+                                                {VISIBILITY_LABELS[level]}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </View>
+
+                            {isParticipant ? (
+                                <Text style={styles.visHelperText}>
+                                    Participants always receive full plan details while they are invited.
+                                </Text>
+                            ) : null}
                         </View>
                     );
                 })}
@@ -414,9 +570,55 @@ const styles = StyleSheet.create({
         color: '#666',
         marginBottom: 16,
     },
+    participantActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 12,
+    },
+    selectionCount: {
+        fontSize: 13,
+        color: '#666',
+        fontWeight: '600',
+    },
+    selectAllButton: {
+        paddingHorizontal: 14,
+        paddingVertical: 8,
+        borderRadius: 999,
+        backgroundColor: '#FFF4E5',
+        borderWidth: 1,
+        borderColor: '#FFCC8A',
+    },
+    selectAllButtonActive: {
+        backgroundColor: '#FF9500',
+        borderColor: '#FF9500',
+    },
+    selectAllButtonText: {
+        fontSize: 13,
+        color: '#C76A00',
+        fontWeight: '700',
+    },
+    selectAllButtonTextActive: {
+        color: '#fff',
+    },
     emptyText: {
         color: '#888',
         fontStyle: 'italic',
+    },
+    participantPrivacyNotice: {
+        marginBottom: 16,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        borderRadius: 12,
+        backgroundColor: '#FFF4E5',
+        borderWidth: 1,
+        borderColor: '#FFE0B2',
+    },
+    participantPrivacyNoticeText: {
+        fontSize: 13,
+        lineHeight: 18,
+        color: '#A35A00',
+        fontWeight: '600',
     },
     personCard: {
         flexDirection: 'row',
@@ -429,7 +631,7 @@ const styles = StyleSheet.create({
         borderColor: '#EAEAEA',
     },
     personCardSelected: {
-        backgroundColor: '#FFF4E5',
+        backgroundColor: '#FF9500',
         borderColor: '#FF9500',
     },
     avatarPlaceholder: {
@@ -438,13 +640,26 @@ const styles = StyleSheet.create({
         borderRadius: 16,
         backgroundColor: '#DDD',
         marginRight: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    avatarPlaceholderSelected: {
+        backgroundColor: '#fff',
+    },
+    avatarText: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#666',
+    },
+    avatarTextSelected: {
+        color: '#FF9500',
     },
     personName: {
         fontSize: 16,
         color: '#333',
     },
     personNameSelected: {
-        color: '#FF9500',
+        color: '#fff',
         fontWeight: 'bold',
     },
     visibilityRow: {
@@ -454,10 +669,35 @@ const styles = StyleSheet.create({
         borderBottomWidth: 1,
         borderBottomColor: '#F0F0F0',
     },
+    visibilityRowLocked: {
+        borderBottomColor: '#FFE0B2',
+    },
+    visHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 8,
+        gap: 12,
+    },
     visName: {
         fontSize: 16,
         fontWeight: '600',
-        marginBottom: 8,
+        color: '#111',
+        flex: 1,
+    },
+    participantBadge: {
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+        borderRadius: 999,
+        backgroundColor: '#FFF4E5',
+        borderWidth: 1,
+        borderColor: '#FFCC8A',
+    },
+    participantBadgeText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#C76A00',
+        textTransform: 'uppercase',
     },
     visOptions: {
         flexDirection: 'row',
@@ -476,6 +716,14 @@ const styles = StyleSheet.create({
         backgroundColor: '#333',
         borderColor: '#333',
     },
+    visButtonDisabled: {
+        backgroundColor: '#FAF2E6',
+        borderColor: '#F1D9B5',
+    },
+    visButtonLockedSelected: {
+        backgroundColor: '#FF9500',
+        borderColor: '#FF9500',
+    },
     visButtonText: {
         fontSize: 12,
         color: '#666',
@@ -483,6 +731,19 @@ const styles = StyleSheet.create({
     visButtonTextSelected: {
         color: '#fff',
         fontWeight: 'bold',
+    },
+    visButtonTextDisabled: {
+        color: '#B99669',
+    },
+    visButtonTextLockedSelected: {
+        color: '#fff',
+        fontWeight: 'bold',
+    },
+    visHelperText: {
+        marginTop: 10,
+        fontSize: 12,
+        lineHeight: 17,
+        color: '#8A6A3E',
     },
     submitButton: {
         backgroundColor: '#FF9500',

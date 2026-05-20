@@ -116,22 +116,25 @@ export async function upsertMyPreferences(
   if (authError) throw authError;
   if (!authData.user) throw new Error('Not authenticated');
 
-  await writeLocalSettings({
+  const local = await writeLocalSettings({
     push_notifications_enabled: input.push_notifications_enabled,
     connected_calendar_provider: input.connected_calendar_provider,
     calendar_push_enabled: input.calendar_push_enabled,
   });
 
+  const current = await getMyPreferences();
+  const fallbackTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
   const payload = {
     user_id: authData.user.id,
-    default_existing_visibility: (input.default_existing_visibility ?? 'busy_only') as VisibilityLevel,
-    hide_everything_enabled: input.hide_everything_enabled ?? false,
-    sleep_start_local: input.sleep_start_local ?? '23:00',
-    sleep_end_local: input.sleep_end_local ?? '07:00',
-    timezone: input.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
-    push_notifications_enabled: input.push_notifications_enabled ?? true,
-    connected_calendar_provider: input.connected_calendar_provider ?? 'none',
-    calendar_push_enabled: input.calendar_push_enabled ?? false,
+    default_existing_visibility: (input.default_existing_visibility ?? current?.default_existing_visibility ?? 'busy_only') as VisibilityLevel,
+    hide_everything_enabled: input.hide_everything_enabled ?? current?.hide_everything_enabled ?? false,
+    sleep_start_local: input.sleep_start_local ?? current?.sleep_start_local ?? '23:00',
+    sleep_end_local: input.sleep_end_local ?? current?.sleep_end_local ?? '07:00',
+    timezone: input.timezone ?? current?.timezone ?? fallbackTimezone,
+    push_notifications_enabled: input.push_notifications_enabled ?? current?.push_notifications_enabled ?? local.push_notifications_enabled,
+    connected_calendar_provider: input.connected_calendar_provider ?? current?.connected_calendar_provider ?? local.connected_calendar_provider,
+    calendar_push_enabled: input.calendar_push_enabled ?? current?.calendar_push_enabled ?? local.calendar_push_enabled,
   };
 
   const { error } = await supabase

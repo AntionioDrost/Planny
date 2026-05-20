@@ -106,6 +106,12 @@ function createMockSupabaseClient() {
       signOut: async () => ({ error: null }),
     },
     from: () => createQueryBuilderMock(),
+    storage: {
+      from: () => ({
+        upload: async () => ({ data: null, error: supabaseConfigError }),
+        getPublicUrl: () => ({ data: { publicUrl: '' } }),
+      }),
+    },
     rpc: async () => ({ data: null, error: supabaseConfigError }),
   };
 }

@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
-import { supabase } from '@/utils/supabase';
 import { router } from 'expo-router';
-import { Camera } from 'lucide-react-native';
+import { updateMyDisplayName } from '@/services/profile-service';
 
 export default function Onboarding() {
     const [loading, setLoading] = useState(false);
@@ -15,28 +14,11 @@ export default function Onboarding() {
         }
 
         setLoading(true);
-
-        // In a full implementation, we would upload an avatar to Supabase Storage here.
-        // For now, we just update the user's profile with the display name.
-        const { data: { user } } = await supabase.auth.getUser();
-
-        if (user) {
-            // First update Auth metadata
-            await supabase.auth.updateUser({
-                data: { display_name: displayName }
-            });
-
-            // Then update public.users table manually if the trigger didn't fire or we need to sync
-            const { error } = await supabase
-                .from('users')
-                .update({ display_name: displayName })
-                .eq('id', user.id);
-
-            if (error) {
-                Alert.alert('Error', error.message);
-            } else {
-                router.replace('/(tabs)');
-            }
+        try {
+            await updateMyDisplayName(displayName.trim());
+            router.replace('/(tabs)');
+        } catch (error: any) {
+            Alert.alert('Error', error?.message ?? 'Could not save your display name.');
         }
 
         setLoading(false);
@@ -45,14 +27,7 @@ export default function Onboarding() {
     return (
         <View style={styles.container}>
             <Text style={styles.title}>Set up your profile</Text>
-            <Text style={styles.subtitle}>Let connections know who you are.</Text>
-
-            <TouchableOpacity style={styles.avatarContainer}>
-                <View style={styles.avatarPlaceholder}>
-                    <Camera color="#888" size={32} />
-                </View>
-                <Text style={styles.avatarText}>Add Profile Picture (Optional)</Text>
-            </TouchableOpacity>
+            <Text style={styles.subtitle}>Your display name is required before you can continue.</Text>
 
             <View style={styles.formContainer}>
                 <TextInput
@@ -75,13 +50,6 @@ export default function Onboarding() {
                         <Text style={styles.primaryButtonText}>Continue</Text>
                     )}
                 </TouchableOpacity>
-
-                <TouchableOpacity
-                    style={styles.skipButton}
-                    onPress={() => router.replace('/(tabs)')}
-                >
-                    <Text style={styles.skipButtonText}>Skip for now</Text>
-                </TouchableOpacity>
             </View>
         </View>
     );
@@ -103,28 +71,8 @@ const styles = StyleSheet.create({
     subtitle: {
         fontSize: 16,
         color: '#666',
-        marginBottom: 32,
+        marginBottom: 28,
         lineHeight: 22,
-    },
-    avatarContainer: {
-        alignItems: 'center',
-        marginBottom: 40,
-    },
-    avatarPlaceholder: {
-        width: 100,
-        height: 100,
-        borderRadius: 50,
-        backgroundColor: '#F0F0F0',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginBottom: 12,
-        borderWidth: 1,
-        borderColor: '#EAEAEA',
-    },
-    avatarText: {
-        color: '#FF9500',
-        fontSize: 14,
-        fontWeight: '500',
     },
     formContainer: {
         gap: 16,
@@ -148,14 +96,5 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 16,
         fontWeight: '600',
-    },
-    skipButton: {
-        padding: 16,
-        alignItems: 'center',
-    },
-    skipButtonText: {
-        color: '#888',
-        fontSize: 14,
-        fontWeight: '500',
     },
 });

@@ -1,9 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { VISIBILITY_LABELS, VISIBILITY_LEVELS } from '@/constants/visibility';
 import type { VisibilityLevel } from '@/types/domain';
 import { getMyPreferences, upsertMyPreferences } from '@/services/preferences-service';
-
-const LEVELS: VisibilityLevel[] = ['hidden', 'busy_only', 'title_only', 'full_details'];
 
 export default function PrivacySettingsScreen() {
   const [loading, setLoading] = useState(true);
@@ -61,13 +60,15 @@ export default function PrivacySettingsScreen() {
       <Text style={styles.subtitle}>Choose what new connections see on existing events.</Text>
 
       <View style={styles.optionGrid}>
-        {LEVELS.map((level) => (
+        {VISIBILITY_LEVELS.map((level) => (
           <TouchableOpacity
             key={level}
             style={[styles.option, defaultVisibility === level && styles.optionActive]}
             onPress={() => setDefaultVisibility(level)}
           >
-            <Text style={[styles.optionText, defaultVisibility === level && styles.optionTextActive]}>{level}</Text>
+            <Text style={[styles.optionText, defaultVisibility === level && styles.optionTextActive]}>
+              {VISIBILITY_LABELS[level]}
+            </Text>
           </TouchableOpacity>
         ))}
       </View>

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { router } from 'expo-router';
 import { ArrowLeft, UserMinus, ShieldAlert } from 'lucide-react-native';
+import { UserAvatar } from '@/components/user-avatar';
 import { listConnections, setConnectionStatus } from '@/services/connection-service';
 
 export default function ManageConnectionsScreen() {
@@ -91,9 +92,12 @@ export default function ManageConnectionsScreen() {
                 renderItem={({ item }) => (
                     <View style={styles.card}>
                         <View style={styles.cardInfo}>
-                            <View style={styles.avatar}>
-                                <Text style={styles.avatarText}>{item.otherUser?.display_name?.charAt(0) || 'U'}</Text>
-                            </View>
+                            <UserAvatar
+                                avatarUrl={item.otherUser?.avatar_url}
+                                name={item.otherUser?.display_name}
+                                size={48}
+                                style={styles.avatar}
+                            />
                             <View>
                                 <Text style={styles.cardTitle}>{item.otherUser?.display_name || 'Unknown User'}</Text>
                                 <Text style={styles.cardSubtitle}>Connected since {new Date(item.created_at).toLocaleDateString()}</Text>
@@ -189,18 +193,7 @@ const styles = StyleSheet.create({
         flex: 1,
     },
     avatar: {
-        width: 48,
-        height: 48,
-        borderRadius: 24,
-        backgroundColor: '#FF9500',
-        alignItems: 'center',
-        justifyContent: 'center',
         marginRight: 12,
-    },
-    avatarText: {
-        color: '#fff',
-        fontSize: 20,
-        fontWeight: 'bold',
     },
     cardTitle: {
         fontSize: 16,

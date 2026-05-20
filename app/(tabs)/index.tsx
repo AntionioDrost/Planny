@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '@/utils/supabase';
 import { Calendar } from 'react-native-calendars';
 import { Clock, MapPin } from 'lucide-react-native';
@@ -29,7 +30,7 @@ export default function HomeScreen() {
 
     const { data: participantEvents } = await supabase
       .from('event_participants')
-      .select('events(*)')
+      .select('status, events(*)')
       .eq('user_id', session.user.id);
 
     // Fetch events shared with them for visibility
@@ -50,7 +51,11 @@ export default function HomeScreen() {
     // 2. Participant events (flatten the join)
     participantEvents?.forEach((pe: any) => {
       if (pe.events && !allEventsMap.has((pe.events as any).id)) {
-        allEventsMap.set((pe.events as any).id, { ...(pe.events as any), type: 'participant' });
+        allEventsMap.set((pe.events as any).id, {
+          ...(pe.events as any),
+          type: 'participant',
+          participantStatus: pe.status,
+        });
       }
     });
 
@@ -74,7 +79,7 @@ export default function HomeScreen() {
       }
     });
 
-    const combinedEvents = Array.from(allEventsMap.values());
+    const combinedEvents = Array.from(allEventsMap.values()).filter((event) => event.status !== 'canceled');
 
     // Process markers for the calendar
     const marks: any = {};
@@ -102,9 +107,11 @@ export default function HomeScreen() {
     setLoading(false);
   }, []);
 
-  useEffect(() => {
-    void loadEvents();
-  }, [loadEvents]);
+  useFocusEffect(
+    useCallback(() => {
+      void loadEvents();
+    }, [loadEvents])
+  );
 
   const onDayPress = (day: any) => {
     setSelectedDate(day.dateString);
@@ -225,12 +232,17 @@ export default function HomeScreen() {
               <View style={styles.eventContent}>
                 <View style={styles.eventHeader}>
                   <Text style={styles.eventTitle}>{event.title}</Text>
-                  {event.visibilityLevel === 'busy_only' && (
-                    <View style={styles.badgeBusy}><Text style={styles.badgeText}>Private</Text></View>
-                  )}
-                  {event.visibilityLevel === 'title_only' && (
-                    <View style={styles.badgeTitle}><Text style={styles.badgeText}>Limited</Text></View>
-                  )}
+                  <View style={styles.badgeRow}>
+                    {event.participantStatus === 'pending' && (
+                      <View style={styles.badgePending}><Text style={styles.badgePendingText}>Needs response</Text></View>
+                    )}
+                    {event.visibilityLevel === 'busy_only' && (
+                      <View style={styles.badgeBusy}><Text style={styles.badgeText}>Private</Text></View>
+                    )}
+                    {event.visibilityLevel === 'title_only' && (
+                      <View style={styles.badgeTitle}><Text style={styles.badgeText}>Limited</Text></View>
+                    )}
+                  </View>
                 </View>
 
                 {!event.is_all_day && event.start_time ? (
@@ -366,13 +378,35 @@ const styles = StyleSheet.create({
   eventHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     marginBottom: 8,
+    gap: 8,
   },
   eventTitle: {
     fontSize: 18,
     fontWeight: 'bold',
     color: '#111',
+    flex: 1,
+    paddingRight: 8,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    gap: 6,
+    maxWidth: '50%',
+  },
+  badgePending: {
+    backgroundColor: '#FF9500',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  badgePendingText: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#fff',
+    textTransform: 'uppercase',
   },
   badgeBusy: {
     backgroundColor: '#F0F0F0',

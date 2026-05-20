@@ -1,17 +1,21 @@
 import * as Linking from 'expo-linking';
 import { supabase } from '@/utils/supabase';
+import { normalizeSupabaseError } from '@/utils/supabase-health';
 
 export async function signInWithEmail(email: string, password: string) {
-  return supabase.auth.signInWithPassword({ email, password });
+  const result = await supabase.auth.signInWithPassword({ email, password });
+  return { ...result, error: normalizeSupabaseError(result.error) };
 }
 
 export async function signUpWithEmail(email: string, password: string) {
-  return supabase.auth.signUp({ email, password });
+  const result = await supabase.auth.signUp({ email, password });
+  return { ...result, error: normalizeSupabaseError(result.error) };
 }
 
 export async function sendPasswordReset(email: string) {
   const redirectTo = Linking.createURL('/reset-password');
-  return supabase.auth.resetPasswordForEmail(email, { redirectTo });
+  const result = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+  return { ...result, error: normalizeSupabaseError(result.error) };
 }
 
 export async function signInWithOAuth(provider: 'google' | 'apple') {
@@ -25,7 +29,7 @@ export async function signInWithOAuth(provider: 'google' | 'apple') {
   });
 
   if (error) {
-    return { data, error };
+    return { data, error: normalizeSupabaseError(error) };
   }
 
   if (data?.url) {
@@ -47,5 +51,5 @@ export async function signOut() {
     return localResult;
   }
 
-  return globalResult;
+  return { ...globalResult, error: normalizeSupabaseError(globalResult.error) };
 }

@@ -71,7 +71,7 @@ select
 1. Log in with legacy account and save profile.
 2. Open Privacy Settings and save defaults.
 3. Toggle hide-everything and push settings on User page.
-4. Generate QR, scan with second account, confirm handshake.
+4. Generate QR, scan with second account, and verify both devices show the connection celebration.
 5. Create/edit event with participants + visibility.
 
 ## 6) Promote to prod

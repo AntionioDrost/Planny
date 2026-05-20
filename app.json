@@ -19,7 +19,12 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.READ_CALENDAR",
+        "android.permission.WRITE_CALENDAR",
+        "android.permission.POST_NOTIFICATIONS"
+      ]
     },
     "web": {
       "output": "static",
@@ -27,6 +32,20 @@
     },
     "plugins": [
       "expo-router",
+      "expo-notifications",
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "Planny uses your device calendars to check conflicts and sync your confirmed plans.",
+          "remindersPermission": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Planny uses your photos so you can add a profile picture."
+        }
+      ],
       [
         "expo-splash-screen",
         {

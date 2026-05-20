@@ -2,15 +2,19 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { supabase } from '@/utils/supabase';
 import { useLocalSearchParams, router } from 'expo-router';
-import { Calendar as CalendarIcon, Clock, MapPin, AlignLeft, UserCheck, XCircle, PenTool, Lock } from 'lucide-react-native';
-import { proposeEventTime } from '@/services/event-service';
+import { Calendar as CalendarIcon, Clock, MapPin, AlignLeft, UserCheck, XCircle, PenTool, Lock, Trash2, ArrowLeft } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { syncPlannyEventToDeviceCalendars } from '@/services/device-calendar-service';
+import { cancelEvent } from '@/services/event-service';
 
 export default function EventDetailScreen() {
     const { id } = useLocalSearchParams();
+    const insets = useSafeAreaInsets();
     const [loading, setLoading] = useState(true);
     const [eventData, setEventData] = useState<any>(null);
     const [participantStatus, setParticipantStatus] = useState<string | null>(null);
     const [myUserId, setMyUserId] = useState<string | null>(null);
+    const [participantCount, setParticipantCount] = useState(0);
 
     const loadEventDetails = useCallback(async () => {
         const { data: { user } } = await supabase.auth.getUser();
@@ -36,6 +40,15 @@ export default function EventDetailScreen() {
         }
 
         let resultEvent = { ...event, access_level: 'full_details' };
+
+        if (event.creator_id === user.id) {
+            const { count } = await supabase
+                .from('event_participants')
+                .select('user_id', { count: 'exact', head: true })
+                .eq('event_id', id);
+
+            setParticipantCount(count ?? 0);
+        }
 
         // 2. Determine their EXACT relationship to this event
         if (event.creator_id !== user.id) {
@@ -101,29 +114,63 @@ export default function EventDetailScreen() {
         setLoading(false);
     };
 
-    const proposeAlternative = async () => {
-        if (!eventData?.start_at_utc || !eventData?.end_at_utc) {
-            Alert.alert('Not available', 'This event is missing date-time fields.');
+    const proposeAlternative = () => {
+        if (!eventData?.id) {
+            Alert.alert('Not available', 'This event is missing its identifier.');
             return;
         }
 
-        const currentStart = new Date(eventData.start_at_utc);
-        const currentEnd = new Date(eventData.end_at_utc);
-        const nextDayStart = new Date(currentStart.getTime() + 24 * 60 * 60 * 1000);
-        const nextDayEnd = new Date(currentEnd.getTime() + 24 * 60 * 60 * 1000);
-
-        try {
-            await proposeEventTime(
-                eventData.id,
-                nextDayStart.toISOString(),
-                nextDayEnd.toISOString(),
-                eventData.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
-                'Auto-proposed next day from event detail'
-            );
-            Alert.alert('Proposal sent', 'A counter-proposal has been sent to the event creator.');
-        } catch (error: any) {
-            Alert.alert('Proposal failed', error?.message ?? 'Could not submit proposal.');
+        if (eventData.creator_id === myUserId && participantCount === 0) {
+            Alert.alert('Invite someone first', 'Add at least one participant before proposing a new time.');
+            return;
         }
+
+        router.push(`/propose-time/${eventData.id}` as any);
+    };
+
+    const handleBack = () => {
+        if (router.canGoBack()) {
+            router.back();
+            return;
+        }
+
+        router.replace('/(tabs)' as any);
+    };
+
+    const deleteDate = async () => {
+        if (!eventData?.id || !myUserId || eventData.creator_id !== myUserId) {
+            return;
+        }
+
+        Alert.alert(
+            'Delete date',
+            'This will cancel the date for everyone invited and remove it from your synced device calendars on this device.',
+            [
+                { text: 'Keep date', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                        setLoading(true);
+                        try {
+                            const canceledEvent = await cancelEvent(eventData.id);
+                            try {
+                                await syncPlannyEventToDeviceCalendars(canceledEvent);
+                            } catch {
+                                // Keep the cancel flow successful even if local calendar cleanup fails.
+                            }
+
+                            Alert.alert('Date deleted', 'The date was removed from the app.', [
+                                { text: 'OK', onPress: () => router.replace('/(tabs)' as any) },
+                            ]);
+                        } catch (error: any) {
+                            setLoading(false);
+                            Alert.alert('Delete failed', error?.message ?? 'Could not delete this date.');
+                        }
+                    },
+                },
+            ]
+        );
     };
 
     if (loading || !eventData) {
@@ -137,9 +184,17 @@ export default function EventDetailScreen() {
     const isCreator = eventData.creator_id === myUserId;
     const isPendingParticipant = participantStatus === 'pending';
     const isLimitedView = eventData.access_level === 'busy_only' || eventData.access_level === 'title_only';
+    const startAt = eventData.start_at_utc ? new Date(eventData.start_at_utc) : null;
+    const endAt = eventData.end_at_utc ? new Date(eventData.end_at_utc) : null;
 
     return (
         <ScrollView style={styles.container}>
+            <View style={[styles.topBar, { paddingTop: Math.max(insets.top, 12) }]}>
+                <TouchableOpacity onPress={handleBack} style={styles.backButton}>
+                    <ArrowLeft size={24} color="#111" />
+                </TouchableOpacity>
+            </View>
+
             {isLimitedView && (
                 <View style={styles.privacyBanner}>
                     <Lock size={16} color="#B8860B" />
@@ -159,7 +214,9 @@ export default function EventDetailScreen() {
             <View style={styles.card}>
                 <View style={styles.detailRow}>
                     <CalendarIcon size={20} color="#666" />
-                    <Text style={styles.detailText}>{new Date(eventData.date).toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</Text>
+                    <Text style={styles.detailText}>
+                        {(startAt ?? new Date(eventData.date)).toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
+                    </Text>
                 </View>
 
                 <View style={styles.detailRow}>
@@ -167,7 +224,9 @@ export default function EventDetailScreen() {
                     <Text style={styles.detailText}>
                         {eventData.is_all_day
                             ? 'All Day'
-                            : `${eventData.start_time?.substring(0, 5)} - ${eventData.end_time?.substring(0, 5)}`}
+                            : startAt && endAt
+                                ? `${startAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} - ${endAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                                : `${eventData.start_time?.substring(0, 5)} - ${eventData.end_time?.substring(0, 5)}`}
                     </Text>
                 </View>
 
@@ -185,6 +244,20 @@ export default function EventDetailScreen() {
                     </View>
                 )}
             </View>
+
+            {isCreator && (
+                <View style={styles.creatorActions}>
+                    <Text style={styles.creatorActionsTitle}>Manage Date</Text>
+                    <TouchableOpacity style={styles.proposeCreatorButton} onPress={proposeAlternative}>
+                        <PenTool size={18} color="#fff" />
+                        <Text style={styles.proposeCreatorButtonText}>Propose a time change</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.deleteButton} onPress={deleteDate}>
+                        <Trash2 size={18} color="#D32F2F" />
+                        <Text style={styles.deleteButtonText}>Delete date</Text>
+                    </TouchableOpacity>
+                </View>
+            )}
 
             {/* Mutuality / Consent Block */}
             {participantStatus && !isCreator && (
@@ -218,15 +291,6 @@ export default function EventDetailScreen() {
                     </TouchableOpacity>
                 </View>
             )}
-
-            {isCreator && (
-                <View style={styles.creatorActions}>
-                    <TouchableOpacity style={styles.editBtn}>
-                        <Text style={styles.editBtnText}>Edit Event</Text>
-                    </TouchableOpacity>
-                </View>
-            )}
-
         </ScrollView>
     );
 }
@@ -235,6 +299,20 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: '#F9F9F9',
+    },
+    topBar: {
+        paddingHorizontal: 16,
+        paddingBottom: 8,
+    },
+    backButton: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#fff',
+        borderWidth: 1,
+        borderColor: '#EAEAEA',
     },
     privacyBanner: {
         backgroundColor: '#FFF8E1',
@@ -291,6 +369,49 @@ const styles = StyleSheet.create({
         marginLeft: 16,
         flex: 1,
         lineHeight: 24,
+    },
+    creatorActions: {
+        paddingHorizontal: 24,
+        marginBottom: 24,
+    },
+    creatorActionsTitle: {
+        fontSize: 18,
+        fontWeight: 'bold',
+        marginBottom: 12,
+        color: '#111',
+    },
+    proposeCreatorButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 16,
+        borderRadius: 14,
+        backgroundColor: '#FF9500',
+        borderWidth: 1,
+        borderColor: '#FF9500',
+        marginBottom: 12,
+    },
+    proposeCreatorButtonText: {
+        marginLeft: 8,
+        fontSize: 15,
+        fontWeight: '700',
+        color: '#fff',
+    },
+    deleteButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 16,
+        borderRadius: 14,
+        backgroundColor: '#FFEEED',
+        borderWidth: 1,
+        borderColor: '#FFD1CE',
+    },
+    deleteButtonText: {
+        marginLeft: 8,
+        fontSize: 15,
+        fontWeight: '700',
+        color: '#D32F2F',
     },
     responseContainer: {
         paddingHorizontal: 24,
@@ -366,19 +487,5 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: '600',
         marginLeft: 8,
-    },
-    creatorActions: {
-        paddingHorizontal: 24,
-    },
-    editBtn: {
-        backgroundColor: '#F5F5F5',
-        padding: 16,
-        borderRadius: 12,
-        alignItems: 'center',
-    },
-    editBtnText: {
-        color: '#333',
-        fontWeight: 'bold',
-        fontSize: 16,
     }
 });

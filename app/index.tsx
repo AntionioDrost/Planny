@@ -1,9 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
-import { supabase } from '@/utils/supabase';
+import {
+    ActivityIndicator,
+    Alert,
+    KeyboardAvoidingView,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    useWindowDimensions,
+    View,
+} from 'react-native';
+import { isSupabaseConfigured, supabase } from '@/utils/supabase';
+import { checkSupabaseReachability } from '@/utils/supabase-health';
 import { router } from 'expo-router';
 import { Sparkles } from 'lucide-react-native';
 import { sendPasswordReset, signInWithEmail, signInWithOAuth, signUpWithEmail } from '@/services/auth-service';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function StartPage() {
     const [loading, setLoading] = useState(false);
@@ -11,6 +25,15 @@ export default function StartPage() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [isSignUp, setIsSignUp] = useState(false);
+    const [backendMessage, setBackendMessage] = useState<string | null>(null);
+    const insets = useSafeAreaInsets();
+    const { height, width } = useWindowDimensions();
+    const isCompactHeight = height < 760;
+    const isVeryCompactHeight = height < 680;
+    const brandTitleSize = Math.round(Math.min(56, Math.max(44, width * 0.14)));
+    const heroMinHeight = Math.round(
+        isVeryCompactHeight ? 236 : isCompactHeight ? 278 : Math.min(352, height * 0.42)
+    );
 
     useEffect(() => {
         let isMounted = true;
@@ -41,6 +64,17 @@ export default function StartPage() {
 
         supabase.auth.getSession().then(({ data: { session } }: any) => {
             handleSession(session);
+        }).catch((error: any) => {
+            if (isMounted) {
+                setBackendMessage(error?.message ?? 'Could not initialize the Supabase session.');
+                setInitializing(false);
+            }
+        });
+
+        checkSupabaseReachability().then((result) => {
+            if (isMounted) {
+                setBackendMessage(result.message);
+            }
         });
 
         const { data: authListener } = supabase.auth.onAuthStateChange((_event: any, session: any) => {
@@ -96,7 +130,7 @@ export default function StartPage() {
 
     if (initializing) {
         return (
-            <View style={styles.splashContainer}>
+            <View style={[styles.splashContainer, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
                 <View style={styles.sparklesContainer}>
                     <Sparkles color="#fff" size={80} strokeWidth={1} style={{ position: 'absolute', top: -40, right: 30 }} />
                     <Sparkles color="#fff" size={50} strokeWidth={1.5} style={{ position: 'absolute', bottom: -10, left: 10 }} />
@@ -109,68 +143,115 @@ export default function StartPage() {
 
     return (
         <View style={styles.container}>
-            <View style={styles.heroArea}>
-                <Sparkles color="#fff" size={72} strokeWidth={1.5} style={{ position: 'absolute', top: 80, right: 80 }} />
-                <Sparkles color="#fff" size={44} strokeWidth={1.8} style={{ position: 'absolute', top: 190, left: 80 }} />
-                <Text style={styles.brandTitle}>Planny</Text>
-                <Text style={styles.brandSubtitle}>Coordinate dates, manage privacy, and share plans.</Text>
-            </View>
-
-            <View style={styles.formCard}>
-                <View style={styles.formContainer}>
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Email address"
-                        placeholderTextColor="#888"
-                        value={email}
-                        onChangeText={setEmail}
-                        autoCapitalize="none"
-                        keyboardType="email-address"
-                    />
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Password"
-                        placeholderTextColor="#888"
-                        value={password}
-                        onChangeText={setPassword}
-                        secureTextEntry
-                    />
-
-                    <TouchableOpacity
-                        style={styles.primaryButton}
-                        onPress={handleAuth}
-                        disabled={loading}
+            <KeyboardAvoidingView
+                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+                style={styles.keyboardContainer}
+            >
+                <ScrollView
+                    bounces={false}
+                    keyboardShouldPersistTaps="handled"
+                    contentContainerStyle={styles.scrollContent}
+                >
+                    <View
+                        style={[
+                            styles.heroArea,
+                            {
+                                minHeight: heroMinHeight,
+                                paddingTop: Math.max(insets.top + 20, 36),
+                                paddingBottom: isVeryCompactHeight ? 26 : 42,
+                            },
+                        ]}
                     >
-                        {loading ? (
-                            <ActivityIndicator color="#fff" />
-                        ) : (
-                            <Text style={styles.primaryButtonText}>{isSignUp ? 'Create Account' : 'Log In'}</Text>
-                        )}
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                        style={styles.secondaryButton}
-                        onPress={() => setIsSignUp(!isSignUp)}
-                    >
-                        <Text style={styles.secondaryButtonText}>
-                            {isSignUp ? 'Already have an account? Log In' : 'Need an account? Sign Up'}
-                        </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity style={styles.resetButton} onPress={handleResetPassword}>
-                        <Text style={styles.resetText}>Forgot password?</Text>
-                    </TouchableOpacity>
-
-                    <View style={styles.oauthContainer}>
-                        <TouchableOpacity style={styles.oauthButton} disabled={loading} onPress={() => handleOAuth('apple')}>
-                            <Text style={styles.oauthText}>Continue with Apple</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.oauthButton} disabled={loading} onPress={() => handleOAuth('google')}>
-                            <Text style={styles.oauthText}>Continue with Google</Text>
-                        </TouchableOpacity>
+                        <Sparkles
+                            color="#fff"
+                            size={isCompactHeight ? 54 : 68}
+                            strokeWidth={1.45}
+                            style={[styles.sparkle, styles.sparklePrimary]}
+                        />
+                        <Sparkles
+                            color="#fff"
+                            size={isCompactHeight ? 28 : 34}
+                            strokeWidth={1.8}
+                            style={[styles.sparkle, styles.sparkleSecondary]}
+                        />
+                        <View style={styles.brandLockup}>
+                            <Text style={[styles.brandTitle, { fontSize: brandTitleSize }]}>Planny</Text>
+                            <Text style={styles.brandSubtitle}>Coordinate dates, manage privacy, and share plans.</Text>
+                        </View>
                     </View>
-                </View>
-            </View>
+
+                    <View style={[styles.formCard, { paddingBottom: Math.max(insets.bottom + 24, 32) }]}>
+                        <View style={styles.formContainer}>
+                            {!isSupabaseConfigured && (
+                                <View style={styles.configBanner}>
+                                    <Text style={styles.configBannerText}>
+                                        Backend not configured. Set `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` before signing in.
+                                    </Text>
+                                </View>
+                            )}
+                            {isSupabaseConfigured && backendMessage && (
+                                <View style={styles.configBanner}>
+                                    <Text style={styles.configBannerText}>{backendMessage}</Text>
+                                </View>
+                            )}
+                            <TextInput
+                                style={styles.input}
+                                placeholder="Email address"
+                                placeholderTextColor="#888"
+                                value={email}
+                                onChangeText={setEmail}
+                                autoCapitalize="none"
+                                keyboardType="email-address"
+                                textContentType="emailAddress"
+                            />
+                            <TextInput
+                                style={styles.input}
+                                placeholder="Password"
+                                placeholderTextColor="#888"
+                                value={password}
+                                onChangeText={setPassword}
+                                secureTextEntry
+                                textContentType="password"
+                            />
+
+                            <TouchableOpacity
+                                style={styles.primaryButton}
+                                onPress={handleAuth}
+                                disabled={loading || !isSupabaseConfigured}
+                            >
+                                {loading ? (
+                                    <ActivityIndicator color="#fff" />
+                                ) : (
+                                    <Text style={styles.primaryButtonText}>{isSignUp ? 'Create Account' : 'Log In'}</Text>
+                                )}
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.secondaryButton}
+                                onPress={() => setIsSignUp(!isSignUp)}
+                                disabled={!isSupabaseConfigured}
+                            >
+                                <Text style={styles.secondaryButtonText}>
+                                    {isSignUp ? 'Already have an account? Log In' : 'Need an account? Sign Up'}
+                                </Text>
+                            </TouchableOpacity>
+
+                            <TouchableOpacity style={styles.resetButton} onPress={handleResetPassword} disabled={!isSupabaseConfigured}>
+                                <Text style={styles.resetText}>Forgot password?</Text>
+                            </TouchableOpacity>
+
+                            <View style={styles.oauthContainer}>
+                                <TouchableOpacity style={styles.oauthButton} disabled={loading || !isSupabaseConfigured} onPress={() => handleOAuth('apple')}>
+                                    <Text style={styles.oauthText}>Continue with Apple</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity style={styles.oauthButton} disabled={loading || !isSupabaseConfigured} onPress={() => handleOAuth('google')}>
+                                    <Text style={styles.oauthText}>Continue with Google</Text>
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+                </ScrollView>
+            </KeyboardAvoidingView>
         </View>
     );
 }
@@ -192,39 +273,63 @@ const styles = StyleSheet.create({
         fontSize: 48,
         fontWeight: 'bold',
         color: '#fff',
-        letterSpacing: -1,
+        letterSpacing: 0,
     },
     container: {
         flex: 1,
         backgroundColor: '#FF9500',
     },
-    heroArea: {
+    keyboardContainer: {
         flex: 1,
+    },
+    scrollContent: {
+        flexGrow: 1,
+        justifyContent: 'flex-end',
+    },
+    heroArea: {
         justifyContent: 'center',
         alignItems: 'center',
         paddingHorizontal: 24,
+        position: 'relative',
+        overflow: 'hidden',
+    },
+    sparkle: {
+        position: 'absolute',
+        opacity: 0.92,
+    },
+    sparklePrimary: {
+        top: 56,
+        right: 58,
+    },
+    sparkleSecondary: {
+        top: 116,
+        left: 48,
+        opacity: 0.64,
+    },
+    brandLockup: {
+        alignItems: 'center',
+        zIndex: 1,
+        width: '100%',
     },
     brandTitle: {
-        fontSize: 56,
         fontWeight: 'bold',
         color: '#fff',
-        letterSpacing: -1,
-        marginBottom: 8,
+        letterSpacing: 0,
+        marginBottom: 10,
     },
     brandSubtitle: {
         color: 'rgba(255,255,255,0.9)',
         fontSize: 15,
         textAlign: 'center',
-        maxWidth: 320,
+        maxWidth: 340,
         lineHeight: 22,
     },
     formCard: {
         backgroundColor: '#fff',
-        borderTopLeftRadius: 28,
-        borderTopRightRadius: 28,
+        borderTopLeftRadius: 30,
+        borderTopRightRadius: 30,
         paddingHorizontal: 24,
-        paddingTop: 24,
-        paddingBottom: 32,
+        paddingTop: 28,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: -2 },
         shadowOpacity: 0.08,
@@ -234,9 +339,23 @@ const styles = StyleSheet.create({
     formContainer: {
         gap: 16,
     },
+    configBanner: {
+        borderRadius: 12,
+        backgroundColor: '#FFF4E5',
+        borderWidth: 1,
+        borderColor: '#FFD59A',
+        padding: 12,
+    },
+    configBannerText: {
+        color: '#8A5A00',
+        fontSize: 13,
+        lineHeight: 18,
+    },
     input: {
         backgroundColor: '#F5F5F5',
-        padding: 16,
+        minHeight: 58,
+        paddingHorizontal: 16,
+        paddingVertical: 15,
         borderRadius: 12,
         fontSize: 16,
         borderWidth: 1,
@@ -244,9 +363,12 @@ const styles = StyleSheet.create({
     },
     primaryButton: {
         backgroundColor: '#FF9500',
-        padding: 16,
+        minHeight: 58,
+        paddingHorizontal: 16,
+        paddingVertical: 15,
         borderRadius: 12,
         alignItems: 'center',
+        justifyContent: 'center',
         marginTop: 8,
     },
     primaryButtonText: {
@@ -255,8 +377,11 @@ const styles = StyleSheet.create({
         fontWeight: '600',
     },
     secondaryButton: {
-        padding: 16,
+        minHeight: 48,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
         alignItems: 'center',
+        justifyContent: 'center',
     },
     secondaryButtonText: {
         color: '#FF9500',
@@ -280,8 +405,11 @@ const styles = StyleSheet.create({
         borderWidth: 1,
         borderColor: '#EAEAEA',
         borderRadius: 12,
-        padding: 14,
+        minHeight: 54,
+        paddingHorizontal: 14,
+        paddingVertical: 13,
         alignItems: 'center',
+        justifyContent: 'center',
         backgroundColor: '#FAFAFA',
     },
     oauthText: {

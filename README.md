@@ -1,50 +1,93 @@
-# Welcome to your Expo app 👋
+# Planny
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Planny is an Expo Router app backed by Supabase. It focuses on privacy-aware planning, mutual connections, proposal workflows, device calendar sync, and push notifications.
 
-## Get started
+## Requirements
 
-1. Install dependencies
+- Node 20+
+- Expo SDK 54 toolchain
+- A Supabase project with the migrations in `supabase/migrations`
+- A native iOS/Android build for device calendar sync and remote push testing
 
-   ```bash
-   npm install
-   ```
+## Environment
 
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+Create a local `.env` file from `.env.example` and set:
 
 ```bash
-npm run reset-project
+EXPO_PUBLIC_APP_ENV=dev
+EXPO_PUBLIC_SUPABASE_URL=...
+EXPO_PUBLIC_SUPABASE_ANON_KEY=...
+EXPO_PUBLIC_FEATURE_FLAGS=proposals,export,hide_everything
+EXPO_PUBLIC_SHOW_CONFIG_WARNINGS=1
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Without the Supabase URL + anon key the app will load the shell, but auth and backend flows stay disabled on purpose.
 
-## Learn more
+## Install and Run
 
-To learn more about developing your project with Expo, look at the following resources:
+```bash
+npm install
+npx expo start
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Remote push notifications are not fully supported in Expo Go. Use a development build for push registration and native calendar sync.
 
-## Join the community
+## Supabase Setup
 
-Join our community of developers creating universal apps.
+Apply the SQL migrations in order:
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+```bash
+supabase db push
+```
+
+Important runtime pieces added in this repo:
+
+- `20260410000000_completeness_runtime.sql`
+  - seeds `event_visibility` for existing events when a connection becomes `active`
+  - enqueues notification outbox rows for invites, responses, proposals, and connection confirmations
+  - tracks delivery attempts on `notification_outbox`
+- `20260418010000_avatar_storage.sql`
+  - creates the public `avatars` storage bucket and profile-image policies
+
+Deploy the edge functions:
+
+```bash
+supabase functions deploy issue_qr_payload
+supabase functions deploy register_qr_scan
+supabase functions deploy create_event_bundle
+supabase functions deploy propose_event_time
+supabase functions deploy respond_event_proposal
+supabase functions deploy export_user_data
+supabase functions deploy send_notification
+supabase functions deploy deliver_notifications
+```
+
+`deliver_notifications` needs:
+
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+
+Invoke `deliver_notifications` from your scheduler/cron to drain the queued notification outbox.
+
+## Native Features
+
+### Device Calendars
+
+- Calendar selection is device-local.
+- Users pick which device calendars Planny reads for conflicts.
+- If sync is enabled, owned Planny events are mirrored to the selected writable device calendars.
+
+### Push Notifications
+
+- Push opt-in is handled on-device with `expo-notifications`.
+- Tokens are stored in `public.device_push_tokens`.
+- Database triggers enqueue notification rows in `public.notification_outbox`.
+- `deliver_notifications` sends those rows through Expo Push.
+
+## Checks
+
+```bash
+npm run lint
+npx tsc --noEmit
+```

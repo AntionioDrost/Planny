@@ -1,26 +1,24 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator, Switch, Alert } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '@/utils/supabase';
 import { router } from 'expo-router';
 import { UserPlus, Settings, LogOut, ShieldAlert, Bell, Calendar as CalendarIcon, ChevronRight, Users } from 'lucide-react-native';
+import { UserAvatar } from '@/components/user-avatar';
 import { signOut } from '@/services/auth-service';
-import { exportUserData } from '@/services/export-service';
 import { getMyPreferences, setHideEverything, setPushNotificationsEnabled } from '@/services/preferences-service';
 import { requestAccountDeletion } from '@/services/profile-service';
-import type { CalendarProvider } from '@/types/domain';
+import { getLocalCalendarSettings } from '@/services/device-calendar-service';
+import { enablePushNotifications, syncExistingPushRegistration } from '@/services/push-service';
 
 export default function UserScreen() {
     const [profile, setProfile] = useState<any>(null);
     const [loading, setLoading] = useState(true);
     const [pushEnabled, setPushEnabled] = useState(true);
     const [hideEverythingEnabled, setHideEverythingEnabled] = useState(false);
-    const [calendarProvider, setCalendarProvider] = useState<CalendarProvider>('none');
+    const [selectedCalendarCount, setSelectedCalendarCount] = useState(0);
 
-    useEffect(() => {
-        loadProfile();
-    }, []);
-
-    const loadProfile = async () => {
+    const loadProfile = useCallback(async () => {
         setLoading(true);
         try {
             const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -32,6 +30,7 @@ export default function UserScreen() {
             const fallbackProfile = {
                 display_name: user.user_metadata?.display_name || user.email?.split('@')[0] || 'Your Profile',
                 email: user.email,
+                avatar_url: user.user_metadata?.avatar_url ?? null,
             };
 
             try {
@@ -54,16 +53,31 @@ export default function UserScreen() {
                 const preferences = await getMyPreferences();
                 setHideEverythingEnabled(preferences?.hide_everything_enabled ?? false);
                 setPushEnabled(preferences?.push_notifications_enabled ?? true);
-                setCalendarProvider((preferences?.connected_calendar_provider as CalendarProvider) ?? 'none');
+
+                if (preferences?.push_notifications_enabled) {
+                    void syncExistingPushRegistration();
+                }
             } catch {
                 setHideEverythingEnabled(false);
                 setPushEnabled(true);
-                setCalendarProvider('none');
+            }
+
+            try {
+                const localCalendarSettings = await getLocalCalendarSettings();
+                setSelectedCalendarCount(localCalendarSettings.selectedCalendarIds.length);
+            } catch {
+                setSelectedCalendarCount(0);
             }
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
+
+    useFocusEffect(
+        useCallback(() => {
+            void loadProfile();
+        }, [loadProfile])
+    );
 
     const handleLogout = async () => {
         const { error } = await signOut();
@@ -86,10 +100,16 @@ export default function UserScreen() {
     const handleTogglePush = async (enabled: boolean) => {
         setPushEnabled(enabled);
         try {
+            if (enabled) {
+                const result = await enablePushNotifications();
+                if (!result.supported) {
+                    throw new Error(result.reason);
+                }
+            }
             await setPushNotificationsEnabled(enabled);
-        } catch {
+        } catch (error: any) {
             setPushEnabled(!enabled);
-            Alert.alert('Update failed', 'Could not update push notification preference.');
+            Alert.alert('Update failed', error?.message ?? 'Could not update push notification preference.');
         }
     };
 
@@ -115,16 +135,6 @@ export default function UserScreen() {
         );
     };
 
-    const handleExportData = async () => {
-        try {
-            const data = await exportUserData();
-            const icsLength = data.ics_export.length;
-            Alert.alert('Export ready', `JSON + ICS export generated successfully. ICS length: ${icsLength} chars.`);
-        } catch (error: any) {
-            Alert.alert('Export failed', error?.message ?? 'Could not export data.');
-        }
-    };
-
     if (loading) {
         return (
             <View style={[styles.container, { justifyContent: 'center' }]}>
@@ -137,9 +147,12 @@ export default function UserScreen() {
         <ScrollView style={styles.container} contentContainerStyle={styles.content}>
             <View style={styles.header}>
                 <View style={styles.profileInfo}>
-                    <View style={styles.avatarPlaceholder}>
-                        <Text style={styles.avatarText}>{profile?.display_name?.charAt(0) || 'U'}</Text>
-                    </View>
+                    <UserAvatar
+                        avatarUrl={profile?.avatar_url}
+                        name={profile?.display_name}
+                        size={56}
+                        style={styles.avatarPlaceholder}
+                    />
                     <View>
                         <Text style={styles.title}>{profile?.display_name || 'Your Profile'}</Text>
                         <Text style={styles.subtitle}>{profile?.email}</Text>
@@ -176,14 +189,6 @@ export default function UserScreen() {
                 <TouchableOpacity style={styles.actionRow} onPress={() => router.push('/privacy-settings' as any)}>
                     <View style={styles.actionRowLeft}>
                         <ShieldAlert color="#666" size={20} />
-                        <Text style={styles.actionText}>Manage Visibility Defaults</Text>
-                    </View>
-                    <ChevronRight color="#CCC" size={20} />
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.actionRow} onPress={() => router.push('/privacy-settings' as any)}>
-                    <View style={styles.actionRowLeft}>
-                        <ShieldAlert color="#666" size={20} />
                         <Text style={styles.actionText}>Privacy Defaults & Sleep Hours</Text>
                     </View>
                     <ChevronRight color="#CCC" size={20} />
@@ -194,7 +199,7 @@ export default function UserScreen() {
                         <CalendarIcon color="#666" size={20} />
                         <Text style={styles.actionText}>Connected Calendars</Text>
                     </View>
-                    <View style={styles.badgePlaceholder}><Text style={styles.badgeTextSmall}>{calendarProvider === 'none' ? '0 Connected' : '1 Connected'}</Text></View>
+                    <View style={styles.badgePlaceholder}><Text style={styles.badgeTextSmall}>{selectedCalendarCount} Selected</Text></View>
                     <ChevronRight color="#CCC" size={20} />
                 </TouchableOpacity>
 
@@ -230,14 +235,6 @@ export default function UserScreen() {
                     <View style={styles.actionRowLeft}>
                         <CalendarIcon color="#666" size={20} />
                         <Text style={styles.actionText}>Proposal Inbox</Text>
-                    </View>
-                    <ChevronRight color="#CCC" size={20} />
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.actionRow} onPress={handleExportData}>
-                    <View style={styles.actionRowLeft}>
-                        <CalendarIcon color="#666" size={20} />
-                        <Text style={styles.actionText}>Export Data (JSON + ICS)</Text>
                     </View>
                     <ChevronRight color="#CCC" size={20} />
                 </TouchableOpacity>
@@ -281,18 +278,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     avatarPlaceholder: {
-        width: 56,
-        height: 56,
-        borderRadius: 28,
-        backgroundColor: '#FF9500',
-        justifyContent: 'center',
-        alignItems: 'center',
         marginRight: 16,
-    },
-    avatarText: {
-        color: '#fff',
-        fontSize: 24,
-        fontWeight: 'bold',
     },
     title: {
         fontSize: 24,

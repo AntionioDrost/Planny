@@ -1,9 +1,14 @@
 import { supabase } from './supabase';
+import { getDeviceCalendarConflicts } from '@/services/device-calendar-service';
 
 export interface TimeSlot {
     start: Date;
     end: Date;
 }
+
+type AvailabilityEventRow = {
+    is_all_day: boolean | null;
+};
 
 export const checkAvailability = async (
     userId: string,
@@ -16,8 +21,6 @@ export const checkAvailability = async (
     conflicts: { userId: string; reason: string }[]
 }> => {
     const dateStr = date.toISOString().split('T')[0];
-    const startStr = startTime.toTimeString().split(' ')[0];
-    const endStr = endTime.toTimeString().split(' ')[0];
     const windowStart = new Date(date);
     const windowEnd = new Date(date);
     windowStart.setHours(startTime.getHours(), startTime.getMinutes(), 0, 0);
@@ -25,33 +28,37 @@ export const checkAvailability = async (
 
     const conflicts: { userId: string; reason: string }[] = [];
 
+    const deviceCalendarConflicts = await getDeviceCalendarConflicts(windowStart, windowEnd);
+    if (deviceCalendarConflicts.length > 0) {
+        const preview = deviceCalendarConflicts
+            .slice(0, 2)
+            .map((conflict) => conflict.title)
+            .join(', ');
+        conflicts.push({
+            userId,
+            reason: preview
+                ? `Your selected device calendar is busy (${preview})`
+                : 'Your selected device calendar is busy',
+        });
+    }
+
     for (const targetId of targetUserIds) {
-        // 1. Check their events
+        // 1. Check their events using real overlap logic against UTC timestamps.
         const { data: events } = await supabase
             .from('events')
-            .select('id, is_all_day, start_time, end_time, start_at_utc, end_at_utc')
+            .select('id, is_all_day, start_at_utc, end_at_utc')
             .eq('creator_id', targetId)
-            .or(`date.eq.${dateStr},start_at_utc.gte.${windowStart.toISOString()},end_at_utc.lte.${windowEnd.toISOString()}`);
+            .neq('status', 'canceled')
+            .lt('start_at_utc', windowEnd.toISOString())
+            .gt('end_at_utc', windowStart.toISOString());
 
-        if (events) {
-            for (const event of events) {
-                if (event.is_all_day) {
-                    conflicts.push({ userId: targetId, reason: 'Has an all-day event' });
-                    break;
-                }
-
-                // Simple overlapping time check
-                if (event.start_time && event.end_time) {
-                    if (
-                        (startStr >= event.start_time && startStr < event.end_time) ||
-                        (endStr > event.start_time && endStr <= event.end_time) ||
-                        (startStr <= event.start_time && endStr >= event.end_time)
-                    ) {
-                        conflicts.push({ userId: targetId, reason: 'Has a conflicting event' });
-                        break;
-                    }
-                }
-            }
+        if (events?.length) {
+            const hasAllDayEvent = events.some((event: AvailabilityEventRow) => event.is_all_day);
+            conflicts.push({
+                userId: targetId,
+                reason: hasAllDayEvent ? 'Has an all-day event' : 'Has a conflicting event',
+            });
+            continue;
         }
 
         const { data: blocks } = await supabase
@@ -63,6 +70,26 @@ export const checkAvailability = async (
 
         if (blocks && blocks.length > 0) {
             conflicts.push({ userId: targetId, reason: 'Has an unavailable time block' });
+            continue;
+        }
+
+        // Fallback for legacy date-only events if they still exist without UTC timestamps.
+        const { data: legacyEvents } = await supabase
+            .from('events')
+            .select('id, is_all_day')
+            .eq('creator_id', targetId)
+            .neq('status', 'canceled')
+            .eq('date', dateStr)
+            .is('start_at_utc', null);
+
+        if (legacyEvents?.length) {
+            conflicts.push({
+                userId: targetId,
+                reason: legacyEvents.some((event: AvailabilityEventRow) => event.is_all_day)
+                    ? 'Has an all-day event'
+                    : 'Has a conflicting event',
+            });
+            continue;
         }
     }
 

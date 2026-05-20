@@ -1,6 +1,11 @@
 import { supabase } from '@/utils/supabase';
+import type { NotificationKind } from '@/types/domain';
 
-export async function queueGenericNotification(recipientUserId: string, kind: string, payload: Record<string, unknown> = {}) {
+export async function queueGenericNotification(
+  recipientUserId: string,
+  kind: NotificationKind,
+  payload: Record<string, unknown> = {}
+) {
   const { data, error } = await supabase.rpc('send_notification', {
     p_recipient_user_id: recipientUserId,
     p_kind: kind,
